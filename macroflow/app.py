@@ -1,4 +1,8 @@
-"""MacroFlow desktop interface: shared design system, editor and scenario library."""
+"""MacroFlow — automation studio, custom 3.1 graphical interface.
+
+All desktop interaction remains in the existing controller and engine.
+The UI uses vector icons rendered from SVG and a reusable, accent-forward style.
+"""
 import copy
 import sys
 from datetime import datetime
@@ -14,10 +18,12 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QListWidget, QListWidgetItem, QStackedWidget,
     QLineEdit, QComboBox, QSpinBox, QCheckBox, QMessageBox, QSplitter,
     QFormLayout, QAbstractItemView, QDialog, QInputDialog, QFileDialog, QMenu,
+    QPlainTextEdit, QSizePolicy, QScrollArea,
 )
 
 from . import APP_NAME, __version__, GITHUB_REPOSITORY
 from .theme import stylesheet, FONT_PREFERENCES, ACCENT, asset_path
+from .visual import GraphicButton, NavButton, TitleBar, AccentWave, WindowsDarkChrome, vector_icon, pictogram
 from .store import data_directory, fresh_script, fresh_step, load_scripts, save_scripts
 from .exchange import parse_file, write_file
 from .templates import TEMPLATES, build_template
@@ -26,26 +32,33 @@ from .recorder import Recorder
 from .overlay import RegionSelector
 from .updates import UpdateCheck
 
+ACTION_ICONS = {
+    'click': 'cursor', 'double_click': 'cursor', 'type_text': 'text',
+    'press_key': 'keyboard', 'wait': 'hourglass', 'find_text': 'search',
+}
 
-def label(text, role=None):
+
+def label(text, role=None, nowrap=False):
     result = QLabel(text)
     result.setTextFormat(Qt.PlainText)
     if role:
         result.setObjectName(role)
-    result.setWordWrap(True)
+    result.setWordWrap(not nowrap)
+    if nowrap:
+        result.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     return result
 
 
-def button(text, callback=None, primary=False, role=None):
-    result = QPushButton(text)
-    if primary:
-        result.setObjectName("primary")
-    elif role:
-        result.setObjectName(role)
-    if callback:
-        result.clicked.connect(callback)
-    result.setCursor(Qt.PointingHandCursor)
-    return result
+def button(text, callback=None, primary=False, role=None, icon=None):
+    return GraphicButton(text, icon, callback, role='primary' if primary else (role or 'secondary'))
+
+
+def icon_button(icon, callback, tip='', role='iconButton', size=19):
+    b = GraphicButton('', icon, callback, role=role, icon_size=size)
+    b.setFixedWidth(42)
+    if tip:
+        b.setToolTip(tip)
+    return b
 
 
 def vbox(widget, margin=16, spacing=12):
@@ -55,32 +68,102 @@ def vbox(widget, margin=16, spacing=12):
     return layout
 
 
-def panel():
+def panel(name='panel'):
     frame = QFrame()
-    frame.setObjectName("panel")
+    frame.setObjectName(name)
     return frame
 
 
-def orange_heading(text):
-    return label(text, "sectionTitle")
+def line_separator():
+    line = QFrame()
+    line.setObjectName('separator')
+    line.setFixedHeight(1)
+    return line
 
 
-def spinbox(suffix, maximum=120000):
-    widget = QSpinBox()
-    widget.setRange(0, maximum)
-    widget.setSingleStep(50 if maximum > 10000 else 1)
-    widget.setSuffix(suffix)
-    widget.setMinimumWidth(113)
-    return widget
+def section_header(icon, title, right=None):
+    row = QHBoxLayout()
+    row.setSpacing(10)
+    row.addWidget(pictogram(icon, ACCENT, 22))
+    row.addWidget(label(title, 'sectionTitle'))
+    row.addStretch(1)
+    if right is not None:
+        row.addWidget(right)
+    return row
+
+
+def header_block(icon, title, desc, controls=None):
+    head = QFrame()
+    head.setObjectName('pageHeader')
+    row = QHBoxLayout(head)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(14)
+    row.addWidget(pictogram(icon, ACCENT, 35))
+    column = QVBoxLayout()
+    column.setSpacing(3)
+    column.addWidget(label(title, 'pageTitle', nowrap=True))
+    column.addWidget(label(desc, 'pageSubtitle'))
+    row.addLayout(column, 1)
+    if controls is not None:
+        row.addLayout(controls)
+    return head
+
+
+def field_label(text):
+    return label(text, 'fieldLabel')
+
+
+def spinbox(suffix=' мс', maximum=120000):
+    w = QSpinBox()
+    w.setRange(0, maximum)
+    w.setSingleStep(50 if maximum > 10000 else 1)
+    w.setSuffix(suffix)
+    w.setMinimumWidth(102)
+    w.setMinimumHeight(37)
+    return w
+
+
+def labeled_control(title, widget, min_width=None):
+    c = QWidget()
+    col = QVBoxLayout(c)
+    col.setContentsMargins(0, 0, 0, 0)
+    col.setSpacing(5)
+    col.addWidget(field_label(title))
+    col.addWidget(widget)
+    if min_width:
+        c.setMinimumWidth(min_width)
+    return c
+
+
+class StepListWidget(QListWidget):
+    """A step card's vector ellipsis opens a real menu without harming drag/reorder."""
+    def mousePressEvent(self, event):
+        self._press_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            pos = event.position().toPoint()
+            start = getattr(self, '_press_pos', pos)
+            item = self.itemAt(pos)
+            if item is not None and (pos - start).manhattanLength() < 8:
+                right_edge = self.visualItemRect(item).right()
+                if right_edge - 38 <= pos.x() <= right_edge:
+                    self.setCurrentItem(item)
+                    self.customContextMenuRequested.emit(pos)
+                    event.accept()
+                    return
+        super().mouseReleaseEvent(event)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"MacroFlow — Automation Studio {__version__}")
-        self.setWindowIcon(QIcon(str(asset_path("macroflow.ico"))))
-        self.resize(1250, 820)
-        self.setMinimumSize(1040, 680)
+        self.setWindowTitle(f'{APP_NAME} — Automation Studio {__version__}')
+        self.setWindowIcon(QIcon(str(asset_path('macroflow.ico'))))
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinMaxButtonsHint)
+        self.resize(1536, 900)
+        self.setMinimumSize(1100, 730)
         self.scripts = load_scripts()
         self.current_id = None
         self.running_script_id = None
@@ -89,275 +172,592 @@ class MainWindow(QMainWindow):
         self.update_url = None
         self.internal_change = False
         self.record_since = monotonic()
+        self.steps_compact = False
         self.recorder = Recorder()
         self.recorder.shortcut.connect(self.on_hotkey)
         self.recorder.clicked.connect(self.on_recorded_click)
         self.recorder.pressed.connect(self.on_recorded_key)
+        self.history = {}
+        self.redo_history = {}
+        self.history_latest = {s['id']: copy.deepcopy(s) for s in self.scripts}
 
         root = QWidget()
+        root.setObjectName('appRoot')
         self.setCentralWidget(root)
-        root_layout = QHBoxLayout(root)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
-        self.make_nav(root_layout)
+        shell = QVBoxLayout(root)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+        self.window_bar = TitleBar(self, __version__, asset_path('macroflow.ico'))
+        shell.addWidget(self.window_bar)
+        body = QWidget()
+        body.setObjectName('body')
+        shell.addWidget(body, 1)
+        row = QHBoxLayout(body)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        self.make_nav(row)
         self.pages = QStackedWidget()
-        root_layout.addWidget(self.pages, 1)
-        self.make_dashboard()
-        self.make_editor()
-        self.make_settings()
+        row.addWidget(self.pages, 1)
+        self.make_dashboard()    # 0
+        self.make_editor()       # 1
+        self.make_recording()    # 2
+        self.make_tools()        # 3
+        self.make_settings()     # 4
         self.show_page(0)
         self.refresh_scripts()
-        self.statusBar().showMessage("Готово · F6 запуск/пауза · F7 запись · F8 стоп · F9 шаг")
+        self.statusBar().hide()  # No native white bar; status is custom sidebar footer.
+        self.statusBar().showMessage('Готово · F6 запуск/пауза · F7 запись · F8 стоп · F9 шаг')
         if not self.recorder.start_listeners():
-            QMessageBox.warning(self, "Горячие клавиши", "Глобальные клавиши не запущены. Проверьте разрешения Windows.")
+            QTimer.singleShot(0, lambda: QMessageBox.warning(
+                self, 'Горячие клавиши',
+                'Глобальные клавиши не запущены. Проверьте разрешения Windows.'))
         QTimer.singleShot(1800, self.check_updates_silent)
+
+    def nativeEvent(self, event_type, message):
+        """Keep all 8 Windows resize grips in the frameless window (6 px)."""
+        if sys.platform == 'win32' and self.isVisible() and not self.isMaximized():
+            try:
+                import ctypes
+                from ctypes import wintypes
+                msg = wintypes.MSG.from_address(int(message))
+                if msg.message == 0x0084:  # WM_NCHITTEST
+                    x = ctypes.c_short(msg.lParam & 0xFFFF).value
+                    y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
+                    rect = wintypes.RECT()
+                    ctypes.windll.user32.GetWindowRect(msg.hwnd, ctypes.byref(rect))
+                    gap = 7
+                    left, right = x < rect.left + gap, x >= rect.right - gap
+                    top, bottom = y < rect.top + gap, y >= rect.bottom - gap
+                    if top and left: return True, 13  # HTTOPLEFT
+                    if top and right: return True, 14
+                    if bottom and left: return True, 16
+                    if bottom and right: return True, 17
+                    if left: return True, 10
+                    if right: return True, 11
+                    if top: return True, 12
+                    if bottom: return True, 15
+            except Exception:
+                pass
+        return super().nativeEvent(event_type, message)
 
     def make_nav(self, root):
         sidebar = QFrame()
-        sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(242)
-        layout = vbox(sidebar, 16, 13)
+        sidebar.setObjectName('sidebar')
+        sidebar.setFixedWidth(290)
+        layout = vbox(sidebar, 17, 7)
         brand = QFrame()
-        brand.setObjectName("sidebarBrand")
-        b = vbox(brand, 15, 4)
-        b.addWidget(label("MACROFLOW", "brand"))
-        tagline = label("● AUTOMATION STUDIO")
-        tagline.setStyleSheet(f"color: {ACCENT}; font-size: 11px; font-weight: 800;")
-        b.addWidget(tagline)
+        brand.setObjectName('brandArea')
+        brandrow = QHBoxLayout(brand)
+        brandrow.setContentsMargins(8, 9, 3, 5)
+        brandrow.setSpacing(13)
+        app_icon = QLabel()
+        app_icon.setPixmap(QIcon(str(asset_path('macroflow.ico'))).pixmap(70, 70))
+        app_icon.setFixedSize(72, 72)
+        brandrow.addWidget(app_icon)
+        brandtext = QVBoxLayout()
+        brandtext.setSpacing(1)
+        brandtext.addWidget(label('MACROFLOW', 'brandTitle'))
+        brandtext.addWidget(label('AUTOMATION STUDIO', 'brandSubtitle'))
+        brandrow.addLayout(brandtext)
         layout.addWidget(brand)
-        layout.addSpacing(11)
-        layout.addWidget(orange_heading("НАВИГАЦИЯ"))
+        layout.addWidget(AccentWave())
+        layout.addSpacing(12)
+        layout.addWidget(label('НАВИГАЦИЯ', 'navSection'))
+        layout.addSpacing(6)
         self.nav_buttons = []
-        for i, title in enumerate(("▦   Мои сценарии", "⚡   Редактор макросов", "⚙   Настройки")):
-            btn = button(title, partial(self.show_page, i))
-            btn.setObjectName("navigation")
-            btn.setCheckable(True)
-            layout.addWidget(btn)
-            self.nav_buttons.append(btn)
-        layout.addStretch()
-        layout.addWidget(orange_heading("УПРАВЛЕНИЕ"))
-        layout.addWidget(label("F6 · Запуск / пауза\nF7 · Запись действий\nF8 · Остановить\nF9 · Один шаг", "muted"))
-        layout.addSpacing(7)
-        layout.addWidget(label(f"MACROFLOW   •   v{__version__}", "muted"))
+        items = [('Мои сценарии', 'folder'), ('Редактор макросов', 'bolt'),
+                 ('Запись действий', 'record'), ('Инструменты', 'layers'),
+                 ('Настройки', 'settings')]
+        for i, (title, ico) in enumerate(items):
+            nav = NavButton(title, ico, partial(self.show_page, i))
+            layout.addWidget(nav)
+            self.nav_buttons.append(nav)
+        layout.addSpacing(14)
+        layout.addWidget(line_separator())
+        layout.addSpacing(10)
+        layout.addWidget(label('БЫСТРЫЙ ДОСТУП', 'navSection'))
+        layout.addSpacing(4)
+        shortcuts = [
+            ('Записать сценарий', 'record', self.toggle_record),
+            ('Захват области', 'scan', self.pick_region),
+            ('Импорт сценария', 'import', self.import_scripts),
+            ('Экспорт сценариев', 'export', self.export_all_scripts),
+        ]
+        for text, ico, handler in shortcuts:
+            layout.addWidget(button(text, handler, role='quickAction', icon=ico))
+        layout.addStretch(1)
+        layout.addWidget(line_separator())
+        layout.addSpacing(9)
+        for key, desc in [('F6', 'Запуск / пауза'), ('F7', 'Запись действий'),
+                          ('F8', 'Остановить'), ('F9', 'Один шаг')]:
+            hot = QWidget()
+            hotrow = QHBoxLayout(hot)
+            hotrow.setContentsMargins(0, 1, 0, 1)
+            hotrow.setSpacing(10)
+            keycap = label(key, 'keycap')
+            keycap.setFixedWidth(39)
+            keycap.setAlignment(Qt.AlignCenter)
+            hotrow.addWidget(keycap)
+            hotrow.addWidget(label(desc, 'shortcutHint'))
+            layout.addWidget(hot)
+        layout.addStretch(1)
+        footer = QFrame()
+        footer.setObjectName('sidebarFooter')
+        frow = QHBoxLayout(footer)
+        frow.setContentsMargins(4, 6, 4, 5)
+        self.state_indicator = label('●', 'accent')
+        self.state_indicator.setStyleSheet('color:#22C666;font-size:17px;')
+        frow.addWidget(self.state_indicator)
+        self.sidebar_status = label('Готово к работе', 'sidebarStatus')
+        frow.addWidget(self.sidebar_status, 1)
+        layout.addWidget(footer)
         root.addWidget(sidebar)
 
     def show_page(self, index):
         self.pages.setCurrentIndex(index)
-        for i, btn in enumerate(self.nav_buttons):
-            btn.setChecked(index == i)
+        for i, nav in enumerate(self.nav_buttons):
+            nav.set_active(i == index)
 
     def make_dashboard(self):
         page = QWidget()
-        layout = vbox(page, 25, 15)
-        layout.addWidget(label("Мои сценарии", "heading"))
-        layout.addWidget(label("Управляй сценариями, записывай действия и обменивайся макросами.", "muted"))
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
-        actions.addWidget(button("＋ Новый сценарий", self.new_script, True))
-        actions.addWidget(button("▦ Из шаблона", self.new_from_template))
-        actions.addWidget(button("↧ Импорт .mflow", self.import_scripts))
-        actions.addWidget(button("↥ Экспорт всех", self.export_all_scripts))
-        actions.addStretch()
-        layout.addLayout(actions)
-
-        holder = panel()
-        box = vbox(holder, 16, 12)
-        box.addWidget(orange_heading("БИБЛИОТЕКА СЦЕНАРИЕВ"))
+        layout = vbox(page, 24, 15)
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(9)
+        toolbar.addWidget(button('Новый сценарий', self.new_script, True, icon='plus'))
+        toolbar.addWidget(button('Из шаблона', self.new_from_template, icon='layers'))
+        toolbar.addWidget(button('Импорт .mflow', self.import_scripts, icon='import'))
+        toolbar.addWidget(button('Экспорт всех', self.export_all_scripts, icon='export'))
+        toolbar.addStretch()
+        layout.addWidget(header_block('folder', 'Мои сценарии',
+                    'Библиотека сценариев — создание, запуск и обмен макросами.'))
+        layout.addLayout(toolbar)
+        holder = panel('workPanel')
+        body = vbox(holder, 17, 10)
+        self.dashboard_count = label('0', 'countPill')
+        body.addLayout(section_header('folder', 'Библиотека сценариев', self.dashboard_count))
         self.script_list = QListWidget()
-        self.script_list.setObjectName("scenarioList")
+        self.script_list.setObjectName('scenarioList')
         self.script_list.setSpacing(3)
         self.script_list.itemDoubleClicked.connect(self.open_selected_script)
         self.script_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.script_list.customContextMenuRequested.connect(self.show_script_menu)
-        box.addWidget(self.script_list, 1)
-        box.addWidget(label("Двойной клик — редактировать. Правый клик — меню действий с выбранным сценарием.", "muted"))
+        body.addWidget(self.script_list, 1)
+        body.addWidget(label('Двойной клик — открыть. Правый клик — изменить, копировать, экспортировать или удалить.', 'muted'))
         layout.addWidget(holder, 1)
-        layout.addWidget(label("Сценарии хранятся локально и остаются после обновлений MacroFlow.", "muted"))
         self.pages.addWidget(page)
 
     def make_editor(self):
         page = QWidget()
-        layout = vbox(page, 18, 11)
-        header = QHBoxLayout()
-        header.addWidget(label("Редактор макросов", "heading"))
-        header.addStretch()
-        header.addWidget(button("◆ Сохранить сценарий", self.save, True))
-        layout.addLayout(header)
-
-        info = QHBoxLayout()
+        layout = vbox(page, 19, 10)
+        tools = QHBoxLayout()
+        tools.setSpacing(8)
+        self.undo_btn = icon_button('undo', self.undo_change, 'Отменить последнее изменение')
+        self.redo_btn = icon_button('redo', self.redo_change, 'Повторить изменение')
+        tools.addWidget(self.undo_btn)
+        tools.addWidget(self.redo_btn)
+        tools.addWidget(icon_button('copy', self.duplicate_step, 'Копировать действие'))
+        tools.addWidget(icon_button('trash', self.delete_step, 'Удалить действие'))
+        tools.addSpacing(11)
+        tools.addWidget(button('Сохранить сценарий', self.save, True, icon='save'))
+        layout.addWidget(header_block('bolt', 'Редактор макросов',
+                                    'Создание и настройка сценария автоматизации', tools))
+        ident = panel('parameterPanel')
+        ident_row = QHBoxLayout(ident)
+        ident_row.setContentsMargins(11, 9, 11, 9)
+        ident_row.setSpacing(10)
+        ident_row.addWidget(pictogram('file', '#AAB6C7', 21))
         self.script_name = QLineEdit()
-        self.script_name.setPlaceholderText("Название сценария")
-        self.script_name.setToolTip("Название для библиотеки макросов")
+        self.script_name.setPlaceholderText('Название сценария')
         self.script_name.editingFinished.connect(self.rename_current)
-        info.addWidget(self.script_name, 2)
+        ident_row.addWidget(self.script_name, 2)
+        ident_row.addSpacing(10)
+        ident_row.addWidget(pictogram('pencil', '#AAB6C7', 19))
         self.script_description = QLineEdit()
-        self.script_description.setPlaceholderText("Описание сценария (необязательно)")
+        self.script_description.setPlaceholderText('Описание сценария (необязательно)')
         self.script_description.editingFinished.connect(self.describe_current)
-        info.addWidget(self.script_description, 3)
-        layout.addLayout(info)
+        ident_row.addWidget(self.script_description, 3)
+        layout.addWidget(ident)
 
-        parameters = panel()
-        p = vbox(parameters, 13, 9)
-        p.addWidget(orange_heading("ЗАПУСК И ПОВТОРЕНИЯ"))
-        options = QHBoxLayout()
-        options.setSpacing(13)
-        options.addWidget(label("Повтор"))
+        opts = panel('parameterPanel')
+        op = vbox(opts, 13, 10)
+        op.addLayout(section_header('play', 'Запуск и повторения'))
+        fields = QHBoxLayout()
+        fields.setSpacing(15)
         self.repeat_mode = QComboBox()
-        self.repeat_mode.addItem("Один раз", "once")
-        self.repeat_mode.addItem("Заданное число", "count")
-        self.repeat_mode.addItem("Бесконечно", "forever")
-        self.repeat_mode.setMinimumWidth(148)
+        self.repeat_mode.addItem('Один раз', 'once')
+        self.repeat_mode.addItem('Заданное количество', 'count')
+        self.repeat_mode.addItem('Бесконечно', 'forever')
         self.repeat_mode.currentIndexChanged.connect(self.apply_repeat_settings)
-        options.addWidget(self.repeat_mode, 2)
-        options.addWidget(label("Циклов"))
-        self.repeat_count = spinbox("", 1000000)
+        fields.addWidget(labeled_control('Режим повтора', self.repeat_mode, 164), 2)
+        self.repeat_count = spinbox('', 1000000)
         self.repeat_count.setMinimum(1)
         self.repeat_count.valueChanged.connect(self.apply_repeat_settings)
-        options.addWidget(self.repeat_count, 1)
-        options.addWidget(label("Между циклами"))
-        self.cycle_delay = spinbox(" мс")
-        self.cycle_delay.setToolTip("Пауза после полного прохода по сценарию")
+        fields.addWidget(labeled_control('Количество циклов', self.repeat_count, 112), 1)
+        self.cycle_delay = spinbox(' мс')
         self.cycle_delay.valueChanged.connect(self.apply_repeat_settings)
-        options.addWidget(self.cycle_delay, 1)
-        options.addWidget(label("Общая задержка"))
-        self.global_delay = spinbox(" мс")
-        self.global_delay.setToolTip("Добавляется к задержке каждого шага")
+        fields.addWidget(labeled_control('Пауза между циклами', self.cycle_delay, 137), 1)
+        self.global_delay = spinbox(' мс')
         self.global_delay.valueChanged.connect(self.apply_repeat_settings)
-        options.addWidget(self.global_delay, 1)
-        p.addLayout(options)
-        layout.addWidget(parameters)
+        fields.addWidget(labeled_control('Общая задержка', self.global_delay, 126), 1)
+        op.addLayout(fields)
+        layout.addWidget(opts)
 
-        splitter = QSplitter(Qt.Horizontal)
-        left = panel()
-        ll = vbox(left, 14, 10)
-        ll.addWidget(orange_heading("ПОСЛЕДОВАТЕЛЬНОСТЬ ДЕЙСТВИЙ"))
-        self.step_list = QListWidget()
+        self.edit_split = QSplitter(Qt.Horizontal)
+        self.edit_split.setChildrenCollapsible(False)
+        self.edit_split.setHandleWidth(10)
+        left = panel('workPanel')
+        ll = vbox(left, 13, 10)
+        viewbar = QHBoxLayout()
+        viewbar.setSpacing(8)
+        viewbar.addWidget(pictogram('layers', ACCENT, 22))
+        viewbar.addWidget(label('Последовательность действий', 'sectionTitle'))
+        self.step_count = label('0', 'countPill')
+        viewbar.addWidget(self.step_count)
+        viewbar.addStretch()
+        self.list_mode_btn = icon_button('menu', lambda: self.change_step_display(False), 'Подробный список')
+        self.compact_mode_btn = icon_button('grid', lambda: self.change_step_display(True), 'Компактный список')
+        self.list_mode_btn.setCheckable(True)
+        self.compact_mode_btn.setCheckable(True)
+        self.list_mode_btn.setChecked(True)
+        viewbar.addWidget(self.list_mode_btn)
+        viewbar.addWidget(self.compact_mode_btn)
+        ll.addLayout(viewbar)
+        self.step_list = StepListWidget()
+        self.step_list.setObjectName('stepsList')
+        self.step_list.setSpacing(2)
         self.step_list.setDragDropMode(QAbstractItemView.InternalMove)
         self.step_list.setDefaultDropAction(Qt.MoveAction)
         self.step_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.step_list.itemSelectionChanged.connect(self.select_step)
         self.step_list.model().rowsMoved.connect(self.reordered_steps)
+        self.step_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.step_list.customContextMenuRequested.connect(self.show_step_menu)
         ll.addWidget(self.step_list, 1)
-        first = QHBoxLayout()
-        first.addWidget(button("＋ Добавить", self.add_step, True))
-        first.addWidget(button("↑", partial(self.shift_step, -1)))
-        first.addWidget(button("↓", partial(self.shift_step, 1)))
-        ll.addLayout(first)
-        second = QHBoxLayout()
-        second.addWidget(button("Копировать", self.duplicate_step))
-        second.addWidget(button("Удалить", self.delete_step, role="danger"))
-        ll.addLayout(second)
-        splitter.addWidget(left)
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+        add = button('Добавить действие', self.show_add_action_menu, True, icon='plus')
+        toolbar.addWidget(add, 1)
+        toolbar.addWidget(icon_button('up', partial(self.shift_step, -1), 'Вверх'))
+        toolbar.addWidget(icon_button('down', partial(self.shift_step, 1), 'Вниз'))
+        toolbar.addWidget(icon_button('copy', self.duplicate_step, 'Копировать'))
+        toolbar.addWidget(icon_button('trash', self.delete_step, 'Удалить'))
+        ll.addLayout(toolbar)
+        self.edit_split.addWidget(left)
 
-        right = panel()
-        rl = vbox(right, 17, 13)
-        rl.addWidget(orange_heading("НАСТРОЙКИ ДЕЙСТВИЯ"))
-        form = QFormLayout()
-        form.setHorizontalSpacing(13)
-        form.setVerticalSpacing(13)
+        right = panel('inspectorPanel')
+        rl = vbox(right, 15, 13)
+        self.inspector_badge = label('Выберите действие', 'countPill')
+        rl.addLayout(section_header('settings', 'Настройки действия', self.inspector_badge))
+        heading = panel('inspectorHeading')
+        hrow = QHBoxLayout(heading)
+        hrow.setContentsMargins(12, 11, 12, 11)
+        icon_shell = panel('actionIconBox')
+        icon_shell.setFixedSize(52, 52)
+        icon_shell_row = QHBoxLayout(icon_shell)
+        icon_shell_row.setContentsMargins(8, 8, 8, 8)
+        self.inspector_icon = pictogram('cursor', ACCENT, 33)
+        icon_shell_row.addWidget(self.inspector_icon)
+        hrow.addWidget(icon_shell)
+        hcol = QVBoxLayout()
+        hcol.setSpacing(3)
+        self.inspector_title = label('Выбери шаг слева', 'actionHeading')
+        self.inspector_description = label('Параметры появятся здесь', 'actionDetails')
+        hcol.addWidget(self.inspector_title)
+        hcol.addWidget(self.inspector_description)
+        hrow.addLayout(hcol, 1)
+        rl.addWidget(heading)
         self.action_field = QComboBox()
         for key, title in ACTIONS.items():
             self.action_field.addItem(title, key)
         self.action_field.currentIndexChanged.connect(self.apply_step_edits)
-        form.addRow("Тип действия", self.action_field)
-        self.delay_field = spinbox(" мс")
+        rl.addWidget(labeled_control('Тип действия', self.action_field))
+        self.delay_field = spinbox(' мс')
         self.delay_field.valueChanged.connect(self.apply_step_edits)
-        form.addRow("Задержка после", self.delay_field)
+        rl.addWidget(labeled_control('Задержка после действия', self.delay_field))
+        self.text_field_group = QWidget()
+        tf = QVBoxLayout(self.text_field_group)
+        tf.setContentsMargins(0, 0, 0, 0)
+        tf.setSpacing(5)
+        tf.addWidget(field_label('Текст / клавиша'))
         self.text_field = QLineEdit()
-        self.text_field.setPlaceholderText("Текст / клавиша (например, enter)")
-        self.text_field.textChanged.connect(self.apply_step_edits)
-        form.addRow("Текст / клавиша", self.text_field)
-        self.enabled_field = QCheckBox("Выполнять действие")
+        self.text_field.setPlaceholderText('Например, enter или значение')
+        self.text_field.editingFinished.connect(self.apply_step_edits)
+        tf.addWidget(self.text_field)
+        rl.addWidget(self.text_field_group)
+        self.enabled_field = QCheckBox('Выполнять действие')
         self.enabled_field.stateChanged.connect(self.apply_step_edits)
-        form.addRow("Включено", self.enabled_field)
-        rl.addLayout(form)
-        self.region_label = label("Область не выбрана", "muted")
+        rl.addWidget(self.enabled_field)
+        self.region_label = label('Область не выбрана', 'muted')
         rl.addWidget(self.region_label)
-        rl.addWidget(button("▣ Выделить область на экране", self.pick_region))
-        rl.addWidget(label("Меняй порядок мышью или стрелками ↑ ↓. Значения задержек задаются в миллисекундах.", "muted"))
-        rl.addStretch()
-        splitter.addWidget(right)
-        splitter.setStretchFactor(0, 11)
-        splitter.setStretchFactor(1, 10)
-        layout.addWidget(splitter, 1)
+        self.pick_region_btn = button('Выделить область на экране', self.pick_region, icon='scan')
+        rl.addWidget(self.pick_region_btn)
+        rl.addWidget(line_separator())
+        rl.addWidget(field_label('Быстрая установка задержки'))
+        presets = QHBoxLayout()
+        presets.setSpacing(5)
+        for ms in (100, 300, 600, 1000, 3000):
+            b = button(f'{ms:,} мс'.replace(',', ' '), partial(self.set_delay_preset, ms))
+            b.setToolTip('Установить задержку после выбранного действия')
+            presets.addWidget(b)
+        rl.addLayout(presets)
+        helpcard = panel('helpCard')
+        helpbox = vbox(helpcard, 12, 7)
+        helpbox.addLayout(section_header('info', 'Подсказка'))
+        self.step_help = label('Выберите действие для редактирования. Любое изменение сохраняется локально.', 'hint')
+        helpbox.addWidget(self.step_help)
+        rl.addWidget(helpcard)
+        rl.addStretch(1)
+        self.edit_split.addWidget(right)
+        self.edit_split.setStretchFactor(0, 12)
+        self.edit_split.setStretchFactor(1, 9)
+        self.edit_split.setSizes([750, 520])
+        layout.addWidget(self.edit_split, 1)
 
-        controls = QHBoxLayout()
-        controls.setSpacing(9)
-        controls.addWidget(button("▶ Старт / Пауза  F6", self.start_or_pause, True))
-        controls.addWidget(button("● Запись  F7", self.toggle_record))
-        controls.addWidget(button("■ Стоп  F8", self.stop_runner, role="danger"))
-        controls.addWidget(button("⏭ Один шаг  F9", self.run_one))
-        layout.addLayout(controls)
-        self.log = label("Журнал: ожидание запуска", "muted")
-        layout.addWidget(self.log)
+        transport = panel('transportPanel')
+        ct = QHBoxLayout(transport)
+        ct.setContentsMargins(10, 9, 10, 9)
+        ct.setSpacing(9)
+        self.play_button = button('Старт / Пауза    F6', self.start_or_pause, True, icon='play')
+        ct.addWidget(self.play_button, 2)
+        self.record_button = button('Запись    F7', self.toggle_record, role='record', icon='record')
+        self.record_button.setCheckable(True)
+        ct.addWidget(self.record_button, 1)
+        ct.addWidget(button('Стоп    F8', self.stop_runner, role='danger', icon='stop'), 1)
+        ct.addWidget(button('Один шаг    F9', self.run_one, icon='step'), 1)
+        self.toggle_log_btn = button('Журнал', self.toggle_log, icon='menu')
+        ct.addWidget(self.toggle_log_btn, 1)
+        layout.addWidget(transport)
+        self.log_panel = panel('logPanel')
+        loglayout = vbox(self.log_panel, 13, 6)
+        loghead = QHBoxLayout()
+        loghead.addWidget(pictogram('menu', ACCENT, 18))
+        loghead.addWidget(label('Журнал', 'sectionTitle'))
+        loghead.addStretch()
+        loghead.addWidget(button('Очистить', self.clear_log, icon='trash'))
+        loglayout.addLayout(loghead)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(400)
+        self.log.setPlainText('Ожидание запуска сценария…')
+        self.log.setFixedHeight(77)
+        loglayout.addWidget(self.log)
+        layout.addWidget(self.log_panel)
+        self.pages.addWidget(page)
+
+    def make_recording(self):
+        page = QWidget()
+        layout = vbox(page, 25, 17)
+        layout.addWidget(header_block('record', 'Запись действий',
+                         'Записывай клики мыши и служебные клавиши, превращай их в редактируемые шаги.'))
+        intro = panel('workPanel')
+        col = vbox(intro, 21, 16)
+        col.addLayout(section_header('record', 'Рекордер MacroFlow'))
+        col.addWidget(label('Нажми «Начать запись» или F7, затем выполняй действия в другой программе. '
+                            'Повторное нажатие F7 остановит запись, после чего откроется редактор.', 'hint'))
+        col.addWidget(button('Начать / остановить запись    F7', self.toggle_record, True, icon='record'))
+        col.addWidget(line_separator())
+        col.addLayout(section_header('shield', 'Приватность и безопасность'))
+        col.addWidget(label('Рекордер фиксирует координаты кликов и отдельные служебные клавиши. '
+                            'Обычный ввод текста и пароли не записываются. Запись запускается только вручную.', 'hint'))
+        col.addWidget(label('Перед массовым запуском проверь каждый созданный шаг в редакторе.', 'muted'))
+        layout.addWidget(intro)
+        layout.addStretch(1)
+        self.pages.addWidget(page)
+
+    def make_tools(self):
+        page = QWidget()
+        layout = vbox(page, 25, 16)
+        layout.addWidget(header_block('layers', 'Инструменты',
+                                     'Быстрый доступ к библиотеке действий и обмену сценариями.'))
+        card = panel('workPanel')
+        col = vbox(card, 18, 13)
+        col.addLayout(section_header('plus', 'Библиотека действий'))
+        col.addWidget(label('Выбери действие — оно добавится в открытый сценарий.', 'muted'))
+        tools = [('Левый клик', 'cursor', 'click'), ('Двойной клик', 'cursor', 'double_click'),
+                 ('Ввод текста', 'text', 'type_text'), ('Нажать клавишу', 'keyboard', 'press_key'),
+                 ('Ожидание', 'hourglass', 'wait')]
+        for i in range(0, len(tools), 2):
+            line = QHBoxLayout()
+            line.setSpacing(10)
+            for title, ico, action in tools[i:i+2]:
+                line.addWidget(button(title, partial(self.add_specific_step, action), icon=ico), 1)
+            if len(tools[i:i+2]) == 1:
+                line.addStretch(1)
+            col.addLayout(line)
+        col.addWidget(line_separator())
+        col.addLayout(section_header('import', 'Обмен сценариями'))
+        row = QHBoxLayout()
+        row.addWidget(button('Импорт .mflow', self.import_scripts, icon='import'))
+        row.addWidget(button('Экспорт всех', self.export_all_scripts, icon='export'))
+        row.addStretch()
+        col.addLayout(row)
+        col.addWidget(label('Поиск текста и элементов окна появится в следующем функциональном обновлении. '
+                            'Пока эти инструменты не выполняют поиск в 1С.', 'muted'))
+        layout.addWidget(card)
+        layout.addStretch(1)
         self.pages.addWidget(page)
 
     def make_settings(self):
         page = QWidget()
-        layout = vbox(page, 27, 18)
-        layout.addWidget(label("Настройки", "heading"))
-        layout.addWidget(label("Единый графитово-оранжевый стиль на всех страницах приложения.", "muted"))
-
-        card = panel()
-        content = vbox(card, 19, 12)
-        content.addWidget(orange_heading("ОБНОВЛЕНИЯ ЧЕРЕЗ GITHUB"))
-        content.addWidget(label(f"Репозиторий: {GITHUB_REPOSITORY}     ·     Версия: {__version__}"))
-        self.update_status = label("Проверка обновлений ещё не выполнена", "muted")
-        content.addWidget(self.update_status)
+        layout = vbox(page, 25, 13)
+        layout.addWidget(header_block('settings', 'Настройки',
+                    'Параметры приложения, обновления и управление рабочим столом.'))
+        update = panel('workPanel')
+        u = vbox(update, 18, 12)
+        u.addLayout(section_header('refresh', 'Обновления через GitHub'))
+        u.addWidget(label(f'Репозиторий: {GITHUB_REPOSITORY}    •    Текущая версия: {__version__}', 'hint'))
+        self.update_status = label('Проверка обновлений ещё не выполнена', 'muted')
+        u.addWidget(self.update_status)
         row = QHBoxLayout()
-        row.addWidget(button("Проверить обновления", partial(self.check_updates, False), True))
-        row.addWidget(button("Открыть релизы", self.open_release))
+        row.addWidget(button('Проверить обновления', partial(self.check_updates, False), True, icon='refresh'))
+        row.addWidget(button('Открыть релизы', self.open_release, icon='external'))
         row.addStretch()
-        content.addLayout(row)
-        layout.addWidget(card)
-
-        kb = panel()
-        kl = vbox(kb)
-        kl.addWidget(orange_heading("ГЛОБАЛЬНЫЕ ГОРЯЧИЕ КЛАВИШИ"))
-        kl.addWidget(label("F6 — запуск / пауза     ·     F7 — запись     ·     F8 — стоп     ·     F9 — один шаг"))
-        kl.addWidget(label("Клавиши действуют и при свёрнутом окне. В этой версии их переназначение не реализовано.", "muted"))
+        u.addLayout(row)
+        layout.addWidget(update)
+        kb = panel('workPanel')
+        k = vbox(kb, 18, 12)
+        k.addLayout(section_header('keyboard', 'Глобальные горячие клавиши'))
+        k.addWidget(label('F6 — запуск / пауза     •     F7 — запись     •     F8 — стоп     •     F9 — один шаг', 'hint'))
+        k.addWidget(label('Горячие клавиши работают при свёрнутом окне. Переназначение будет добавлено позже.', 'muted'))
         layout.addWidget(kb)
-
-        privacy = panel()
-        pl = vbox(privacy)
-        pl.addWidget(orange_heading("ПЕРЕД ЗАПУСКОМ"))
-        pl.addWidget(label("Импортированные сценарии никогда не запускаются автоматически. Проверьте каждый шаг перед началом."))
-        pl.addWidget(label("Рекордер сохраняет только клики и отдельные служебные клавиши; вводимые пароли и обычный текст не записывает.", "muted"))
-        pl.addWidget(label("Режим бесконечного повтора требует подтверждения перед запуском. F8 останавливает выполнение; аварийная остановка PyAutoGUI — угол экрана.", "muted"))
-        layout.addWidget(privacy)
-        layout.addStretch()
+        security = panel('workPanel')
+        sec = vbox(security, 18, 12)
+        sec.addLayout(section_header('shield', 'Безопасность автоматизации'))
+        sec.addWidget(label('Сценарии хранятся только на компьютере. Импортированные сценарии не запускаются автоматически.', 'hint'))
+        sec.addWidget(label('В 1С сначала проверяйте действия на тестовых документах. Для бесконечного повтора требуется подтверждение.', 'muted'))
+        layout.addWidget(security)
+        layout.addStretch(1)
         self.pages.addWidget(page)
+
+    def change_step_display(self, compact):
+        self.steps_compact = compact
+        self.list_mode_btn.setChecked(not compact)
+        self.compact_mode_btn.setChecked(compact)
+        step = self.current_step()
+        self.refresh_steps(step['id'] if step else None)
+
+    def show_add_action_menu(self):
+        menu = QMenu(self)
+        for action, title in ACTIONS.items():
+            if action == 'find_text':
+                continue  # The engine does not support it yet.
+            item = menu.addAction(vector_icon(ACTION_ICONS.get(action, 'file'), ACCENT, 18), title)
+            item.triggered.connect(lambda checked=False, chosen=action: self.add_specific_step(chosen))
+        menu.exec(self.cursor().pos())
+
+    def add_specific_step(self, action):
+        if self.current_script() is None:
+            self.new_script()
+        script = self.current_script()
+        if script is None:
+            return
+        step = fresh_step(action)
+        script['steps'].append(step)
+        self.refresh_steps(step['id'])
+        self.save()
+        self.show_page(1)
+
+    def show_step_menu(self, pos):
+        item = self.step_list.itemAt(pos)
+        if item is None:
+            return
+        self.step_list.setCurrentItem(item)
+        menu = QMenu(self)
+        dup = menu.addAction(vector_icon('copy', ACCENT), 'Копировать действие')
+        up = menu.addAction(vector_icon('up', ACCENT), 'Вверх')
+        down = menu.addAction(vector_icon('down', ACCENT), 'Вниз')
+        menu.addSeparator()
+        delete = menu.addAction(vector_icon('trash', '#FC8392'), 'Удалить действие')
+        chosen = menu.exec(self.step_list.viewport().mapToGlobal(pos))
+        if chosen is dup: self.duplicate_step()
+        elif chosen is up: self.shift_step(-1)
+        elif chosen is down: self.shift_step(1)
+        elif chosen is delete: self.delete_step()
+
+    def set_delay_preset(self, ms):
+        if self.current_step():
+            self.delay_field.setValue(ms)
+
+    def toggle_log(self):
+        self.log_panel.setVisible(not self.log_panel.isVisible())
+
+    def clear_log(self):
+        self.log.clear()
+
+    def add_log(self, message):
+        when = datetime.now().strftime('%H:%M:%S')
+        self.log.appendPlainText(f'{when}   {message}')
+        self.sidebar_status.setText(str(message)[:38])
+
+    def undo_change(self):
+        script = self.current_script()
+        if not script or not self.history.get(script['id']):
+            return
+        sid = script['id']
+        self.redo_history.setdefault(sid, []).append(copy.deepcopy(script))
+        previous = self.history[sid].pop()
+        self._restore_history_snapshot(sid, previous)
+
+    def redo_change(self):
+        script = self.current_script()
+        if not script or not self.redo_history.get(script['id']):
+            return
+        sid = script['id']
+        self.history.setdefault(sid, []).append(copy.deepcopy(script))
+        next_state = self.redo_history[sid].pop()
+        self._restore_history_snapshot(sid, next_state)
+
+    def _restore_history_snapshot(self, sid, state):
+        for i, sc in enumerate(self.scripts):
+            if sc['id'] == sid:
+                self.scripts[i] = copy.deepcopy(state)
+                break
+        self.history_latest[sid] = copy.deepcopy(state)
+        save_scripts(self.scripts)
+        self.open_editor()
+        self.refresh_scripts()
+        self._refresh_history_buttons()
+        self.add_log('История изменений обновлена')
+
+    def _refresh_history_buttons(self):
+        sid = self.current_id
+        self.undo_btn.setEnabled(bool(self.history.get(sid)))
+        self.redo_btn.setEnabled(bool(self.redo_history.get(sid)))
 
     # ---- Scenario library and .mflow interchange -----------------------------
     def refresh_scripts(self):
         selected = self.current_id
         self.script_list.clear()
+        self.dashboard_count.setText(str(len(self.scripts)))
         for script in self.scripts:
             item = QListWidgetItem()
-            item.setData(Qt.UserRole, script["id"])
-            item.setSizeHint(QSize(120, 73))
+            item.setData(Qt.UserRole, script['id'])
+            item.setSizeHint(QSize(160, 79))
             self.script_list.addItem(item)
             entry = QWidget()
+            entry.setObjectName('scenarioContents')
             entry.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            entry.setObjectName("scenarioContents")
-            line = QVBoxLayout(entry)
-            line.setContentsMargins(14, 7, 8, 7)
-            line.setSpacing(4)
-            title = label("◆  " + script.get("name", "Без названия"), "scenarioTitle")
-            title.setWordWrap(False)
-            line.addWidget(title)
-            description = script.get("description") or "Нет описания · двойной клик для редактирования"
-            changed = script.get("updated_at")
+            row = QHBoxLayout(entry)
+            row.setContentsMargins(16, 7, 16, 7)
+            row.setSpacing(15)
+            row.addWidget(pictogram('file', ACCENT, 25))
+            info = QVBoxLayout()
+            info.setSpacing(5)
+            title = label(script.get('name', 'Без названия'), 'scenarioTitle', nowrap=True)
+            info.addWidget(title)
+            description = script.get('description') or 'Двойной клик — открыть сценарий'
+            changed = script.get('updated_at')
             if changed:
                 try:
-                    description += "    ·    " + datetime.fromisoformat(changed).strftime("%d.%m.%Y")
+                    description += '   •   ' + datetime.fromisoformat(changed).strftime('%d.%m.%Y')
                 except ValueError:
                     pass
-            subtitle = label(description, "scenarioSubtitle")
-            subtitle.setWordWrap(False)
-            line.addWidget(subtitle)
+            subtitle = label(description, 'scenarioSubtitle', nowrap=True)
+            info.addWidget(subtitle)
+            row.addLayout(info, 1)
+            row.addWidget(pictogram('chevron_right', '#9EACBC', 19))
             self.script_list.setItemWidget(item, entry)
-            if script["id"] == selected:
+            if script['id'] == selected:
                 self.script_list.setCurrentItem(item)
 
     def current_script(self):
@@ -366,10 +766,24 @@ class MainWindow(QMainWindow):
     def save(self):
         script = self.current_script()
         if script:
-            script["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+            sid = script['id']
+            previous = self.history_latest.get(sid)
+            # No history entry when the scenario did not change.
+            if previous is not None:
+                current = {k: v for k, v in script.items() if k != 'updated_at'}
+                prior = {k: v for k, v in previous.items() if k != 'updated_at'}
+                if current != prior:
+                    stack = self.history.setdefault(sid, [])
+                    stack.append(copy.deepcopy(previous))
+                    if len(stack) > 60:
+                        del stack[:-60]
+                    self.redo_history[sid] = []
+            script['updated_at'] = datetime.now().astimezone().isoformat(timespec='seconds')
+            self.history_latest[sid] = copy.deepcopy(script)
         save_scripts(self.scripts)
         self.refresh_scripts()
-        self.statusBar().showMessage("Изменения сохранены")
+        self._refresh_history_buttons()
+        self.statusBar().showMessage('Изменения сохранены')
 
     def new_script(self):
         name, ok = QInputDialog.getText(self, "Новый сценарий", "Название:", text="Новый сценарий")
@@ -401,13 +815,13 @@ class MainWindow(QMainWindow):
         script_id = item.data(Qt.UserRole)
         self.script_list.setCurrentItem(item)
         menu = QMenu(self)
-        edit_action = menu.addAction("✎  Изменить")
-        rename_action = menu.addAction("✎  Переименовать")
-        copy_action = menu.addAction("▣  Копировать")
-        export_action = menu.addAction("↥  Экспортировать .mflow")
+        edit_action = menu.addAction(vector_icon('pencil', ACCENT, 18), 'Изменить')
+        rename_action = menu.addAction(vector_icon('pencil', ACCENT, 18), 'Переименовать')
+        copy_action = menu.addAction(vector_icon('copy', ACCENT, 18), 'Копировать')
+        export_action = menu.addAction(vector_icon('export', ACCENT, 18), 'Экспортировать .mflow')
         menu.addSeparator()
-        folder_action = menu.addAction("▤  Показать папку сценариев")
-        delete_action = menu.addAction("✕  Удалить")
+        folder_action = menu.addAction(vector_icon('folder', ACCENT, 18), 'Показать папку сценариев')
+        delete_action = menu.addAction(vector_icon('trash', '#F68F98', 18), 'Удалить')
         selected = menu.exec(self.script_list.viewport().mapToGlobal(pos))
         if selected is None:
             return
@@ -531,6 +945,7 @@ class MainWindow(QMainWindow):
         self.repeat_count.setEnabled(self.repeat_mode.currentData() == "count")
         self.internal_change = False
         self.refresh_steps()
+        self._refresh_history_buttons()
         self.show_page(1)
 
     def apply_repeat_settings(self, *args):
@@ -561,16 +976,58 @@ class MainWindow(QMainWindow):
     def refresh_steps(self, select_id=None):
         script = self.current_script()
         self.internal_change = True
+        if select_id is None and self.step_list.currentItem():
+            select_id = self.step_list.currentItem().data(Qt.UserRole)
         self.step_list.clear()
-        if script:
-            for number, step in enumerate(script["steps"], 1):
-                title = ACTIONS.get(step["action"], step["action"])
-                flag = "" if step.get("enabled", True) else "  ·  ВЫКЛ"
-                item = QListWidgetItem(f"{number:02}    {title}    ·    {step.get('delay_ms', 0)} мс{flag}")
-                item.setData(Qt.UserRole, step["id"])
-                self.step_list.addItem(item)
-                if select_id == step["id"]:
-                    self.step_list.setCurrentItem(item)
+        steps = script.get('steps', []) if script else []
+        self.step_count.setText(str(len(steps)))
+        for number, step in enumerate(steps, 1):
+            title = ACTIONS.get(step['action'], step['action'])
+            action = step.get('action', 'click')
+            icon = ACTION_ICONS.get(action, 'file')
+            item = QListWidgetItem()
+            item.setData(Qt.UserRole, step['id'])
+            item.setSizeHint(QSize(220, 44 if self.steps_compact else 62))
+            self.step_list.addItem(item)
+            entry = QWidget()
+            entry.setObjectName('stepContents')
+            entry.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            row = QHBoxLayout(entry)
+            row.setContentsMargins(10, 2, 10, 2)
+            row.setSpacing(11)
+            row.addWidget(pictogram('grip', '#738194', 18))
+            no = label(str(number), 'stepIndex')
+            no.setAlignment(Qt.AlignCenter)
+            no.setFixedWidth(22)
+            row.addWidget(no)
+            icon_shell = panel('stepIconBox')
+            icon_shell.setFixedSize(40, 40) if not self.steps_compact else icon_shell.setFixedSize(32, 32)
+            iconrow = QHBoxLayout(icon_shell)
+            iconrow.setContentsMargins(5, 5, 5, 5)
+            iconrow.addWidget(pictogram(icon, ACCENT if step.get('enabled', True) else '#79889B',
+                                        23 if not self.steps_compact else 19))
+            row.addWidget(icon_shell)
+            body = QVBoxLayout()
+            body.setSpacing(2)
+            body.addWidget(label(title, 'stepTitle', nowrap=True))
+            if not self.steps_compact:
+                extra = step.get('text', '') if action in ('press_key', 'type_text') else ''
+                if action in ('click', 'double_click'):
+                    region = step.get('region')
+                    extra = 'Область не задана' if not region else f"X: {region['x']}   Y: {region['y']}"
+                if action == 'wait':
+                    extra = 'Пауза между действиями'
+                if not step.get('enabled', True):
+                    extra = 'Отключено • ' + extra
+                body.addWidget(label(str(extra)[:80], 'stepDetails', nowrap=True))
+            row.addLayout(body, 1)
+            delay = label(f"{step.get('delay_ms', 0)} мс", 'stepDelay')
+            delay.setAlignment(Qt.AlignCenter)
+            row.addWidget(delay)
+            row.addWidget(pictogram('more', '#9CA9BA', 18))
+            self.step_list.setItemWidget(item, entry)
+            if select_id == step['id']:
+                self.step_list.setCurrentItem(item)
         self.internal_change = False
         self.select_step()
 
@@ -589,15 +1046,45 @@ class MainWindow(QMainWindow):
         controls = (self.action_field, self.delay_field, self.text_field, self.enabled_field)
         for control in controls:
             control.setEnabled(step is not None)
+        self.pick_region_btn.setEnabled(step is not None)
         if step:
-            index = self.action_field.findData(step["action"])
+            action = step['action']
+            index = self.action_field.findData(action)
             self.action_field.setCurrentIndex(max(0, index))
-            self.delay_field.setValue(int(step.get("delay_ms", 300)))
-            self.text_field.setText(step.get("text", ""))
-            self.enabled_field.setChecked(step.get("enabled", True))
-            self.region_label.setText(f"Область: {step['region']}" if step.get("region") else "Область не выбрана")
+            self.delay_field.setValue(int(step.get('delay_ms', 300)))
+            self.text_field.setText(step.get('text', ''))
+            self.enabled_field.setChecked(step.get('enabled', True))
+            self.region_label.setText(
+                f"Область: {step['region']}" if step.get('region') else 'Область не выбрана')
+            self.inspector_badge.setText(f'#{self.step_list.currentRow()+1}')
+            self.inspector_title.setText(ACTIONS.get(action, action))
+            help_by_type = {
+                'click': 'Выдели область кнопки; клик выполняется по её центру.',
+                'double_click': 'Двойной клик по центру выбранной области.',
+                'type_text': 'Введите текст латиницей. Кириллица в этом движке пока не поддерживается.',
+                'press_key': 'Укажи клавишу в поле (например, enter, tab или esc).',
+                'wait': 'Это действие ждёт заданную задержку, затем переходит дальше.',
+                'find_text': 'Поиск текста пока не реализован. Не запускай этот шаг.',
+            }
+            desc = help_by_type.get(action, 'Настрой параметры выбранного действия.')
+            self.inspector_description.setText('Редактирование выбранного шага')
+            self.step_help.setText(desc)
+            self.inspector_icon.setPixmap(vector_icon(
+                ACTION_ICONS.get(action, 'file'), ACCENT, 33).pixmap(33, 33))
+            self.text_field_group.setVisible(action in ('type_text', 'press_key', 'find_text'))
+            self.region_label.setVisible(action in ('click', 'double_click'))
+            self.pick_region_btn.setVisible(action in ('click', 'double_click'))
+            if action == 'find_text':
+                self.step_help.setText('Поиск текста ещё не работает в движке. Действие недоступно для выполнения.')
         else:
-            self.region_label.setText("Выберите действие слева")
+            self.inspector_badge.setText('Нет шага')
+            self.inspector_title.setText('Выберите действие')
+            self.inspector_description.setText('Параметры появятся здесь')
+            self.region_label.setText('Выберите действие слева')
+            self.step_help.setText('Добавьте действие или выберите существующее для редактирования.')
+            self.text_field_group.hide()
+            self.region_label.hide()
+            self.pick_region_btn.hide()
         self.internal_change = False
 
     def apply_step_edits(self, *args):
@@ -668,6 +1155,8 @@ class MainWindow(QMainWindow):
     def pick_region(self):
         step = self.current_step()
         if not step:
+            QMessageBox.information(self, 'Захват области',
+                'Сначала откройте редактор, создайте действие «Клик» и выберите его.')
             return
         self.hide()
         QApplication.processEvents()
@@ -682,7 +1171,7 @@ class MainWindow(QMainWindow):
 
     # ---- Runner and recorder -------------------------------------------------
     def runner_ended(self, message):
-        self.log.setText("Журнал: " + message)
+        self.add_log(message)
         self.statusBar().showMessage(message)
 
     def runner_finished(self):
@@ -694,6 +1183,7 @@ class MainWindow(QMainWindow):
 
     def show_running_step(self, index):
         self.statusBar().showMessage(f"Выполняется шаг {index+1}")
+        self.sidebar_status.setText(f"Выполняется шаг {index+1}")
         if self.current_id == self.running_script_id and self.pages.currentIndex() == 1:
             if 0 <= index < self.step_list.count():
                 self.step_list.setCurrentRow(index)
@@ -701,6 +1191,7 @@ class MainWindow(QMainWindow):
     def update_cycle_progress(self, completed, total):
         suffix = str(total) if total else "∞"
         self.statusBar().showMessage(f"Сценарий: завершено циклов {completed}/{suffix}")
+        self.sidebar_status.setText(f"Циклов: {completed}/{suffix}")
 
     def launch_runner(self, one_step=False):
         script = self.current_script()
@@ -730,7 +1221,7 @@ class MainWindow(QMainWindow):
                              repeat_count=script.get("repeat_count", 1),
                              cycle_delay_ms=script.get("cycle_delay_ms", 0),
                              start_index=start_index)
-        self.runner.log.connect(self.log.setText)
+        self.runner.log.connect(self.add_log)
         self.runner.step_changed.connect(self.show_running_step)
         self.runner.cycle_changed.connect(self.update_cycle_progress)
         self.runner.ended.connect(self.runner_ended)
@@ -771,11 +1262,14 @@ class MainWindow(QMainWindow):
             self.save()
             self.open_editor()
         self.recorder.recording = not self.recorder.recording
+        self.record_button.setChecked(self.recorder.recording)
         self.record_since = monotonic()
         if self.recorder.recording:
-            self.statusBar().showMessage("● ЗАПИСЬ · F7 для завершения · вводимый текст не сохраняется")
+            self.statusBar().showMessage("ЗАПИСЬ · F7 для завершения · вводимый текст не сохраняется")
+            self.sidebar_status.setText("Идёт запись")
             self.showMinimized()
         else:
+            self.sidebar_status.setText("Готово к работе")
             self.save()
             self.open_editor()
             self.showNormal()
@@ -861,6 +1355,8 @@ def main():
     app.setFont(font)
     app.setWindowIcon(QIcon(str(asset_path("macroflow.ico"))))
     app.setStyleSheet(stylesheet(font_name))
+    dark_chrome = WindowsDarkChrome(app)
+    app.installEventFilter(dark_chrome)
     try:
         window = MainWindow()
     except RuntimeError as exc:

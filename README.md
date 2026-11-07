@@ -1,65 +1,73 @@
-# MacroFlow — Automation Studio (v0.2.0)
+# MacroFlow — Automation Studio v0.3.1 (UI Redesign)
 
-**Обновлённый прототип программы автоматизации Windows (Python / PySide6).** Интерфейс в едином графитово-оранжевом стиле с акцентом `#FF8B2B`, фирменной иконкой M, без системных стрелок полей.
+Windows desktop automation with an editable step sequence, recording and local scenarios. This update rebuilds the **real desktop UI**, not a static mockup. Based on MacroFlow's previously supplied **v0.2.2** source branch.
 
-> ⚠️ Макросы управляют активным рабочим столом. Прежде чем проводить сотни документов в 1С, проверьте каждый шаг на тестовой базе. Поиск контрагентов, OCR и проверка успешного проведения пока **не реализованы**.
+## UI 3.1
 
-## Новое в v0.2.0
+- Custom **frameless** window: dark title bar with working minimize, maximize/restore, close, drag and Windows edge resize.
+- A unified design system across **five screens**: scenarios, macro editor, recording, tools and settings.
+- All important icons are SVG vector graphics (rendered by QtSvg), not emoji/font glyphs.
+- Interactive states: hover, pressed, selected, checked, disabled; orange highlights remain visible on every screen.
+- Branded graphite/orange sidebar, separated navigation tiles and quick actions.
+- Macro editor: steps as cards with vector pictograms, drag-and-drop ordering, list/compact view, context menu, delays and action inspector.
+- Editor toolbar: save, undo, redo, copy step, delete step. Undo history is maintained for the active scenario (up to 60 changes in memory).
+- Repeat settings: once / N cycles / indefinitely; pauses between steps and cycles in milliseconds.
+- Resizable execution panel: start/pause F6, record F7, stop F8, step F9; collapsible timestamped log.
+- Scenario context menu, import and export `.mflow`, templates and tool shortcuts.
+- Application icon: graphite background + orange M.
 
-- **Режимы повторения:** один раз, N раз (до 1 000 000), бесконечно до F8. Настраиваемая пауза между циклами (мс), сохранение настроек запуска в сценарии. Включена защита от пустого сценария и запрос подтверждения бесконечного запуска.
-- **Редактор:** перетаскивание действий, кнопки ↑ / ↓, копирование, выключение отдельных действий, индивидуальные и общие задержки в миллисекундах.
-- **Библиотека:** большие жирные названия, краткое описание, дата изменения, без счётчика шагов. По правому клику: изменить, переименовать, копировать, экспортировать, открыть папку сценариев и удалить с подтверждением.
-- **Импорт и экспорт:** формат `.mflow` (читаемый JSON), совместимость с JSON, один или все сценарии. При импорте создаются новые идентификаторы — существующие сценарии не перезаписываются. Импорт никогда ничего не запускает автоматически.
-- **Шаблоны:** «Документы 1С», «Заполнение формы», «Повторяющиеся клики». Заготовки создаются с **отключёнными** действиями; включайте только после настройки.
-- **Внешний вид:** графитовый фон, фирменные оранжевые акценты во всех разделах, цветные стрелки выпадающих меню/числовых полей, стилизованные контекстные меню, отдельные кнопки навигации, шрифт Segoe UI Variable (если доступен) или Segoe UI.
-- **Иконка Windows:** графитовый квадрат и оранжевая M, применяется к окну, исполняемому файлу, ярлыку и установщику.
-- **Горячие клавиши:** F6 — запуск/пауза, F7 — запись, F8 — стоп, F9 — один шаг. Рекордер сохранён (мышь + отдельные служебные клавиши; пароли/вводимый текст не записываются).
-- **Обновления:** проверка новых версий на GitHub Releases; сборка инсталлятора через GitHub Actions по тегу `v*`. Автоматическая установка обновления в приложении пока не предусмотрена.
+## Which functions are actually available?
 
-## Инструкция запуска из исходников (Windows 10/11)
+The original execution engine is preserved. **Working actions:** click, double click, ASCII text input, press key, delay. Recording collects mouse clicks and selected service keys. Scenario repeat and `.mflow` interchange are working in the original codebase.
 
-Установите Python 3.12 x64, затем откройте PowerShell в каталоге `MacroFlow`:
+**Not implemented yet:** OCR, UI Automation element selection, smart window lookup, counterparty search in 1C, Cyrillic text typing, automatic *installation* of updates (only checking for updates is implemented). The interface does not pretend those actions already work.
+
+## Run on Windows
+
+Use Python **3.12** (recommended for the release workflow):
 
 ```powershell
 py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python -m unittest discover -s tests -v
-python main.py
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\Scripts\python.exe main.py
 ```
 
-### Сборка нового установщика через GitHub
+You can also run `python main.py` if your selected Python has the necessary packages.
 
-Если код проверен и запушен в ветку `main`, создайте **новый** тег (не переиспользуйте `v0.1.0`):
+## Install into an existing local repository
+
+1. Stop MacroFlow. Back up the repository directory and `%APPDATA%\MacroFlow\scenarios.json`.
+2. Extract the ZIP **contents** into the repository directory beside `main.py`, merging `macroflow/`, `assets/`, `tests/`, `installer/` and `.github/`.
+3. Run the tests and application directly with Python; verify the interface, scenario lists, hotkeys, record/stop and a harmless test macro.
+4. Publish from PowerShell after confirming locally:
 
 ```powershell
 git add .
-git commit -m "MacroFlow v0.2.0 UI, repeats, and scenario exchange"
+git commit -m "MacroFlow v0.3.1 — vector UI redesign"
 git push origin main
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
-Затем смотрите `Actions` и `Releases` репозитория. Не публикуйте тег до загрузки обновлённого кода. После успешной сборки появится `MacroFlow-Setup-0.2.0.exe`.
+The tag initiates the GitHub Actions Windows installer build; successful builds publish the release. **Do not push the tag before testing.** The archive contains no `.git` metadata and does not change user scenarios in `%APPDATA%`.
 
-## Файлы и совместимость
+> If your installed source already contains unpublished functionality from a later v0.3.0 branch, do not overwrite it without reviewing the diff. This redesign is based on the last supplied source, which was v0.2.x. The screenshot marked v0.3.0 was used as the visual reference, not as actual source code.
 
-- `%APPDATA%\MacroFlow\scenarios.json` — пользовательские данные, **не удаляются** при обновлении.
-- `macroflow/app.py` — интерфейс, библиотека, редактор, контекстное меню.
-- `macroflow/theme.py` — единая тема, графика стрелок (`assets/`).
-- `macroflow/engine.py` — исполнитель циклов с паузой и остановкой.
-- `macroflow/store.py` — сценарии, загрузка старого формата, сохранение.
-- `macroflow/exchange.py` — безопасный импорт / экспорт `.mflow`.
-- `macroflow/templates.py` — стартовые шаблоны.
-- `macroflow/recorder.py` — запись действий, глобальные горячие клавиши.
-- `installer/macroflow.iss` — установщик и Windows-ярлыки.
+## Data / safety
 
-Старые сценарии v0.1.0 автоматически получают значения повторения «один раз». Старый файл сценариев сохраняется в том же месте. Для дополнительной безопасности перед обновлением скопируйте `%APPDATA%\MacroFlow\scenarios.json` в резервную папку.
+Before performing high-volume operations in 1C, test a script on a non-production database and verify results step by step. Mouse targets still use screen coordinates. F8 attempts to stop execution; PyAutoGUI also has a mouse-to-corner failsafe. Never store login details or passwords in shared macro files.
 
-### Известные ограничения
+## Tests
 
-- Поиск текста/OCR/компонентов UI Automation в 1С, ввод русского текста, циклы по условиям и автоматическая установка обновлений пока не реализованы.
-- Шаги, импортированные из сторонних `.mflow`, могут нажимать на любые элементы рабочего стола. Проверяйте их до запуска.
-- Координаты кликов пока абсолютные. Перемещение или изменение размера окон нарушает сценарий.
-- Системные сочетания клавиш в этой версии фиксированы.
-- Сборка Windows / внешний вид требуют проверки на настоящем компьютере; Linux CI не заменяет реальный Windows runner.
+Local static compilation and store/exchange tests can run on any Python installation. Qt GUI and execution-engine tests require PySide6 and are run by GitHub Actions on Windows using the offscreen Qt backend. This package was not GUI-render-tested in the authoring container because PySide6 was unavailable there.
+
+### One-command UI upgrade (PowerShell)
+
+Instead of manually copying folders, extract this ZIP anywhere and run **from inside the extracted folder**:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\APPLY-TO-PROJECT.ps1 -ProjectPath "D:\GitHub\MacroFlow-v0.1.0-source-fixed\MacroFlow"
+```
+
+This verifies the target directory, backs up current UI files and (if present) `scenarios.json` under `_backups`, and copies the new source while leaving `.git` untouched. `_backups/` is excluded from Git. After that, run the tests and `python main.py` in your project folder. If your local version contains newer business logic than v0.2.2, inspect the replacement source before applying.

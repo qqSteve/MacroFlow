@@ -11,3 +11,4 @@ installer_output/
 *.log
 *.tmp
 .env
+_backups/
